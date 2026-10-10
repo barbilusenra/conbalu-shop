@@ -3,6 +3,7 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Lenis from 'lenis';
 import { products, categories, cleanCart, getProduct } from './catalog.js';
 import { briefToText } from './integrations.js';
+import { initMotion, initAmbientMotion, createMenuController, burst } from './motion.js';
 
 gsap.registerPlugin(ScrollTrigger);
 const $ = (s, root = document) => root.querySelector(s);
@@ -14,6 +15,8 @@ let cart = [];
 try { cart = cleanCart(JSON.parse(localStorage.getItem(bagKey) || '[]')); } catch { /* Storage can be unavailable. In-memory bag still works. */ }
 let lenis, pageMotion, pageAbort, toastTimer, activeStep = 0, filter = 'all';
 let opener;
+const menuController = createMenuController(() => lenis);
+const cleanupAmbient = initAmbientMotion();
 const modalIds = ['product-dialog','cart-dialog','brief-dialog','privacy-dialog'];
 
 function notify(message) {
@@ -28,22 +31,34 @@ function persist() {
   updateCart();
 }
 function openDialog(id) {
+  const fromMenu = $('#menu-dialog').open;
+  if (fromMenu) menuController.close({ immediate: true, returnFocus: false });
   const alreadyOpen = $('dialog[open]');
-  if (!alreadyOpen) opener = document.activeElement;
+  if (fromMenu) opener = $('.menu-toggle');
+  else if (!alreadyOpen) opener = document.activeElement;
   else alreadyOpen.close();
   lenis?.stop();
-  $(id).showModal();
+  const dialog = $(id);
+  gsap.killTweensOf(dialog);
+  dialog.showModal();
+  if (!reduced.matches) gsap.fromTo(dialog, { x: id === '#cart-dialog' ? 100 : 0, y: id === '#cart-dialog' ? 0 : 18, opacity: .7 }, { x: 0, y: 0, opacity: 1, duration: .5, ease: 'power3.out', clearProps: 'transform,opacity' });
 }
-function closeDialog(dialog) { dialog?.close(); }
+function closeDialog(dialog) {
+  if (!dialog?.open) return;
+  gsap.killTweensOf(dialog);
+  if (reduced.matches) { dialog.close(); return; }
+  gsap.to(dialog, { x: dialog.id === 'cart-dialog' ? 80 : 0, y: dialog.id === 'cart-dialog' ? 0 : 12, opacity: 0, duration: .22, ease: 'power2.in', onComplete: () => { dialog.close(); gsap.set(dialog, { clearProps: 'transform,opacity' }); } });
+}
 modalIds.forEach(id => {
   const dialog = document.getElementById(id);
+  dialog.addEventListener('cancel', e => { e.preventDefault(); closeDialog(dialog); });
   dialog.addEventListener('close', () => {
     if (!$('dialog[open]')) { lenis?.start(); if (opener?.isConnected) opener.focus({preventScroll:true}); }
   });
   dialog.addEventListener('click', e => {
     if (e.target !== dialog) return;
     const r = dialog.getBoundingClientRect();
-    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeDialog(dialog);
   });
 });
 const arrow = '<span aria-hidden="true">↗</span>';
@@ -58,6 +73,7 @@ function itemMarkup(p) {
   return `<article class="cart-item">${art(p)}<div><h3>${p.name}</h3><p>${categories[p.category].singular}<br>Precio por confirmar</p></div><button class="remove-item" data-remove="${p.id}" aria-label="Quitar ${p.name}"><span aria-hidden="true">×</span></button></article>`;
 }
 function updateCart() {
+  $('[data-bag-display]').textContent = String(cart.length).padStart(2, '0');
   $$('[data-cart-count]').forEach(el => { el.textContent = cart.length; });
   $('[data-cart]').setAttribute('aria-label', `Abrir bolsa, ${cart.length} ${cart.length === 1 ? 'plantilla' : 'plantillas'}`);
   const items = cart.map(getProduct);
@@ -112,11 +128,7 @@ $('#brief-form').addEventListener('submit', e => {
   $('.form-status').textContent = 'Tu brief está listo para guardar. No se envió: lo tenés en tu dispositivo para compartirlo cuando se habilite el contacto.';
 });
 
-function closeMenu() {
-  $('#main-nav').classList.remove('open');
-  $('.menu-toggle').setAttribute('aria-expanded','false');
-  $('.menu-toggle').setAttribute('aria-label','Abrir menú');
-}
+function closeMenu() { menuController.close({ immediate: true, returnFocus: false }); }
 document.addEventListener('click', e => {
   const target = e.target.closest('button,a');
   if (!target) return;
@@ -128,7 +140,7 @@ document.addEventListener('click', e => {
   if (target.matches('[data-add]')) {
     const id = target.dataset.add;
     if (!getProduct(id)) return;
-    if (!cart.includes(id)) { cart.push(id); persist(); target.textContent = 'Guardada en tu bolsa ✓'; }
+    if (!cart.includes(id)) { cart.push(id); persist(); target.textContent = 'Guardada en tu bolsa ✓'; burst(target); }
     else { closeDialog(target.closest('dialog')); openDialog('#cart-dialog'); }
   }
   if (target.matches('[data-remove]')) {
@@ -142,10 +154,7 @@ document.addEventListener('click', e => {
     $(`[data-step="${activeStep}"] input, [data-step="${activeStep}"] select, [data-step="${activeStep}"] textarea`)?.focus();
   }
   if (target.matches('[data-prev]')) { activeStep--; showStep(); $(`[data-step="${activeStep}"] input, [data-step="${activeStep}"] select`)?.focus(); }
-  if (target.matches('.menu-toggle')) {
-    const open = $('#main-nav').classList.toggle('open');
-    target.setAttribute('aria-expanded',String(open)); target.setAttribute('aria-label',open?'Cerrar menú':'Abrir menú');
-  }
+  if (target.matches('.menu-toggle')) menuController.toggle();
   if (target.matches('#main-nav a')) closeMenu();
   if (target.matches('[data-privacy]')) openDialog('#privacy-dialog');
   if (target.matches('[data-clear-cart]')) { cart = []; persist(); $('#privacy-status').textContent = 'La bolsa guardada en este navegador se eliminó.'; }
@@ -160,8 +169,6 @@ document.addEventListener('click', e => {
     if (destination) { e.preventDefault(); destination.scrollIntoView({behavior:reduced.matches?'instant':'smooth'}); destination.setAttribute('tabindex','-1'); destination.focus({preventScroll:true}); }
   }
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#main-nav').classList.contains('open')) { closeMenu(); $('.menu-toggle').focus(); } });
-document.addEventListener('click', e => { if (!e.target.closest('.site-header')) closeMenu(); });
 addEventListener('storage', e => { if (e.key === bagKey) { try { cart = cleanCart(JSON.parse(e.newValue || '[]')); } catch { cart = []; } updateCart(); } });
 function filterProducts() {
   const input = $('#search');
@@ -192,7 +199,7 @@ smoothMedia.add('(prefers-reduced-motion: no-preference) and (pointer: fine)', (
   lenis.on('scroll',update); gsap.ticker.add(tick); gsap.ticker.lagSmoothing(0);
   return () => { gsap.ticker.remove(tick); lenis?.off('scroll',update); lenis?.destroy(); lenis = undefined; };
 });
-function cleanupPage() { pageAbort?.abort(); pageMotion?.revert(); }
+function cleanupPage() { pageAbort?.abort(); pageMotion?.(); }
 function initPage(container, navigation = false) {
   pageAbort = new AbortController();
   const namespace = container.dataset.barbaNamespace;
@@ -204,67 +211,7 @@ function initPage(container, navigation = false) {
     filterProducts();
   }
   updateCart();
-  pageMotion = gsap.matchMedia();
-  pageMotion.add({motion:'(prefers-reduced-motion: no-preference)',desktop:'(min-width: 768px)'}, context => {
-    if (!context.conditions.motion) return;
-    const intro = gsap.timeline({defaults:{duration:.85,ease:'power3.out'}});
-    const lines = $$('.hero-line',container);
-    if (lines.length) {
-      intro.from(lines,{y:context.conditions.desktop?55:20,stagger:.1},0);
-      // Keep the mobile focal image static so it can paint immediately.
-      if (context.conditions.desktop) intro.from('.hero-card',{y:70,rotation:0,stagger:.1,duration:1.05},.1);
-      intro.from('.hero-seal',{scale:.75,duration:.55},.35);
-    } else {
-      const heading = $('h1',container);
-      if (heading) intro.from(heading,{y:30},0);
-    }
-    if (!context.conditions.desktop) {
-      // On phones, initialize only a single heading tween when it enters view.
-      // Avoid splitting/measuring the entire document during startup.
-      const mobileTweens = [];
-      const observer = new IntersectionObserver(entries => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            mobileTweens.push(gsap.from(entry.target,{y:18,duration:.55,ease:'power2.out'}));
-            observer.unobserve(entry.target);
-          }
-        });
-      },{threshold:.2});
-      $$('[data-words]',container).forEach(el=>observer.observe(el));
-      return () => { observer.disconnect(); mobileTweens.forEach(tween=>tween.revert()); };
-    }
-    $$('[data-words]',container).forEach(heading => {
-      const original = heading.innerHTML;
-      const walker = document.createTreeWalker(heading,NodeFilter.SHOW_TEXT);
-      const nodes = []; while(walker.nextNode()) nodes.push(walker.currentNode);
-      const accessibleHeading = heading.cloneNode(true);
-      $$('br', accessibleHeading).forEach(br => br.replaceWith(' '));
-      heading.setAttribute('aria-label', accessibleHeading.textContent.replace(/\s+/g,' ').trim());
-      for(const node of nodes) {
-        const fragment = document.createDocumentFragment();
-        node.textContent.split(/(\s+)/).forEach(word => {
-          if (!word.trim()) fragment.append(document.createTextNode(word));
-          else { const span = document.createElement('span'); span.className = 'word'; span.setAttribute('aria-hidden','true'); span.textContent = word; fragment.append(span); }
-        });
-        node.replaceWith(fragment);
-      }
-      gsap.from($$('.word',heading),{y:24,stagger:.035,duration:.6,ease:'power2.out',scrollTrigger:{trigger:heading,start:'top 90%',once:true}});
-      // Restore authored markup when media settings or routes change.
-      heading.dataset.originalMarkup = original;
-    });
-    $$('.category-item,.process-list li,.stats>div',container).forEach(el => {
-      gsap.from(el,{y:30,duration:.7,ease:'power2.out',scrollTrigger:{trigger:el,start:'top 92%',once:true}});
-    });
-    return () => {
-      $$('[data-original-markup]',container).forEach(heading => { heading.innerHTML = heading.dataset.originalMarkup; delete heading.dataset.originalMarkup; heading.removeAttribute('aria-label'); });
-    };
-  },container);
-  pageMotion.add('(prefers-reduced-motion: no-preference) and (min-width: 1024px)', () => {
-    const section = $('.manifesto',container);
-    if (section) gsap.timeline({scrollTrigger:{trigger:section,start:'top bottom',end:'bottom top',scrub:1}})
-      .fromTo('.manifesto-one',{y:60,rotation:-6},{y:-45,rotation:-15,ease:'none'},0)
-      .fromTo('.manifesto-two',{y:90,rotation:4},{y:-30,rotation:15,ease:'none'},0);
-  },container);
+  pageMotion = initMotion(container);
   const refresh = () => { if(container.isConnected) ScrollTrigger.refresh(); };
   document.fonts.ready.then(refresh);
   $$('img',container).forEach(img => { if (!img.complete) img.addEventListener('load',refresh,{once:true,signal:pageAbort.signal}); });
@@ -289,15 +236,17 @@ import('@barba/core').then(({default:barba}) => barba.init({
       if (!reduced.matches) await gsap.to(current.container,{opacity:0,y:-12,duration:.18,ease:'power2.in'});
       cleanupPage();
     },
-    enter({next}) {
+    // Barba removes the previous container before `after`. Measuring earlier
+    // includes its height and displaces pinned sections on client navigation.
+    after({next}) {
       window.scrollTo({top:0,behavior:'instant'}); lenis?.scrollTo(0,{immediate:true});
       const doc = new DOMParser().parseFromString(next.html,'text/html');
       document.title = doc.title;
       const description = $('meta[name="description"]',doc)?.content;
       if (description) $('meta[name="description"]').content = description;
-      initPage(next.container,true); lenis?.start();
+      initPage(next.container,true); lenis?.resize(); lenis?.start();
     },
   }],
 }));
-addEventListener('pagehide', () => { cleanupPage(); smoothMedia.revert(); clearTimeout(toastTimer); });
+addEventListener('pagehide', () => { cleanupPage(); smoothMedia.revert(); cleanupAmbient(); menuController.destroy(); clearTimeout(toastTimer); });
 addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
