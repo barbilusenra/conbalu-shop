@@ -1,0 +1,303 @@
+import gsap from 'gsap';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import Lenis from 'lenis';
+import { products, categories, cleanCart, getProduct } from './catalog.js';
+import { briefToText } from './integrations.js';
+
+gsap.registerPlugin(ScrollTrigger);
+const $ = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => [...root.querySelectorAll(s)];
+const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+const bagKey = 'conbalu:bag:v1';
+const sitePath = path => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`;
+let cart = [];
+try { cart = cleanCart(JSON.parse(localStorage.getItem(bagKey) || '[]')); } catch { /* Storage can be unavailable. In-memory bag still works. */ }
+let lenis, pageMotion, pageAbort, toastTimer, activeStep = 0, filter = 'all';
+let opener;
+const modalIds = ['product-dialog','cart-dialog','brief-dialog','privacy-dialog'];
+
+function notify(message) {
+  const toast = $('.toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
+}
+function persist() {
+  try { localStorage.setItem(bagKey, JSON.stringify(cart)); } catch { notify('Tu selección se conservará durante esta visita.'); }
+  updateCart();
+}
+function openDialog(id) {
+  const alreadyOpen = $('dialog[open]');
+  if (!alreadyOpen) opener = document.activeElement;
+  else alreadyOpen.close();
+  lenis?.stop();
+  $(id).showModal();
+}
+function closeDialog(dialog) { dialog?.close(); }
+modalIds.forEach(id => {
+  const dialog = document.getElementById(id);
+  dialog.addEventListener('close', () => {
+    if (!$('dialog[open]')) { lenis?.start(); if (opener?.isConnected) opener.focus({preventScroll:true}); }
+  });
+  dialog.addEventListener('click', e => {
+    if (e.target !== dialog) return;
+    const r = dialog.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close();
+  });
+});
+const arrow = '<span aria-hidden="true">↗</span>';
+const art = p => `<div class="poster panel-${p.panel}"><img src="${sitePath('/images/editorial-concepts.webp')}" srcset="${sitePath('/images/editorial-concepts-small.webp')} 768w, ${sitePath('/images/editorial-concepts.webp')} 1536w" sizes="(max-width: 767px) 110vw, 60vw" alt="Vista de concepto de ${p.name}" width="1536" height="1024"></div>`;
+function showProduct(id) {
+  const p = getProduct(id);
+  if (!p) return;
+  $('#product-content').innerHTML = `<div class="product-detail"><div class="detail-image">${art(p)}</div><div class="detail-copy"><span class="eyebrow">${categories[p.category].singular} / ${p.number}</span><h2 id="product-title">${p.name}</h2><p>${p.description}</p><div class="detail-facts">Formato digital · Edición en Canva<br>Contenido final y requisitos por confirmar<br>Precio por confirmar</div><button class="button" data-add="${p.id}">${cart.includes(p.id) ? 'Ya está en tu bolsa' : 'Guardar en mi bolsa'} ${arrow}</button><button class="button button-outline" data-custom="${p.category}">Lo quiero a mi manera ${arrow}</button><p class="detail-note">Vista de concepto. La imagen es una exploración visual; el archivo final y sus condiciones se publicarán antes de habilitar la compra.</p></div></div>`;
+  openDialog('#product-dialog');
+}
+function itemMarkup(p) {
+  return `<article class="cart-item">${art(p)}<div><h3>${p.name}</h3><p>${categories[p.category].singular}<br>Precio por confirmar</p></div><button class="remove-item" data-remove="${p.id}" aria-label="Quitar ${p.name}"><span aria-hidden="true">×</span></button></article>`;
+}
+function updateCart() {
+  $$('[data-cart-count]').forEach(el => { el.textContent = cart.length; });
+  $('[data-cart]').setAttribute('aria-label', `Abrir bolsa, ${cart.length} ${cart.length === 1 ? 'plantilla' : 'plantillas'}`);
+  const items = cart.map(getProduct);
+  const empty = `<div class="cart-empty"><h3>Acá empieza tu próxima idea.</h3><p>Tu bolsa está vacía. Explorá las plantillas y guardá las que más van con vos.</p><a href="${sitePath('/shop/')}" class="button" data-close-link>Ir al shop ${arrow}</a></div>`;
+  $('#cart-content').innerHTML = items.length ? items.map(itemMarkup).join('') + `<div class="cart-bottom"><p>${items.length} ${items.length === 1 ? 'plantilla seleccionada' : 'plantillas seleccionadas'}. Precios y compras próximamente. No se realizará ningún cobro.</p><a class="button" href="${sitePath('/checkout/')}" data-close-link>Ver mi selección ${arrow}</a><button class="text-link" data-close>Seguir mirando</button></div>` : empty;
+  const checkoutItems = $('#checkout-items');
+  if (checkoutItems) checkoutItems.innerHTML = items.length ? items.map(itemMarkup).join('') : empty;
+  $$('[data-add]').forEach(button => { if (cart.includes(button.dataset.add)) button.innerHTML = `Ya está en tu bolsa ${arrow}`; });
+}
+function openBrief(category) {
+  $('#brief-form').elements.product.value = categories[category] ? category : 'carousel';
+  activeStep = 0;
+  $('.form-status').textContent = '';
+  showStep();
+  openDialog('#brief-dialog');
+}
+function showStep() {
+  $$('[data-step]').forEach((fieldset, i) => {
+    fieldset.hidden = i !== activeStep;
+    // Inactive required controls must not prevent the final submit event.
+    fieldset.disabled = i !== activeStep;
+  });
+  $$('.step-indicator li').forEach((li,i) => i === activeStep ? li.setAttribute('aria-current','step') : li.removeAttribute('aria-current'));
+  $('[data-step-number]').textContent = activeStep + 1;
+  $('[data-prev]').hidden = activeStep === 0;
+  $('[data-next]').hidden = activeStep === 2;
+  $('[data-submit]').hidden = activeStep !== 2;
+}
+function validateStep() {
+  const fields = $$('input,select,textarea', $(`[data-step="${activeStep}"]`));
+  return fields.every(field => {
+    if (field.required && !field.value.trim()) { field.setCustomValidity('Completá este campo para continuar.'); }
+    else { field.setCustomValidity(''); }
+    return field.reportValidity();
+  });
+}
+$('#brief-form').addEventListener('input', e => { if (e.target.setCustomValidity) e.target.setCustomValidity(''); });
+$('#brief-form').addEventListener('submit', e => {
+  e.preventDefault();
+  if (activeStep < 2) { if (validateStep()) { activeStep++; showStep(); $(`[data-step="${activeStep}"] input, [data-step="${activeStep}"] select`)?.focus(); } return; }
+  if (!validateStep()) return;
+  $$('[data-step]').forEach(el => { el.disabled = false; });
+  const data = Object.fromEntries(new FormData(e.currentTarget));
+  data.product = categories[data.product].singular;
+  showStep();
+  const blob = new Blob([briefToText(data)], {type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = 'conbalu-mi-brief.txt'; link.dataset.barbaPrevent = 'all';
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  $('.form-status').textContent = 'Tu brief está listo para guardar. No se envió: lo tenés en tu dispositivo para compartirlo cuando se habilite el contacto.';
+});
+
+function closeMenu() {
+  $('#main-nav').classList.remove('open');
+  $('.menu-toggle').setAttribute('aria-expanded','false');
+  $('.menu-toggle').setAttribute('aria-label','Abrir menú');
+}
+document.addEventListener('click', e => {
+  const target = e.target.closest('button,a');
+  if (!target) return;
+  if (target.matches('[data-product]')) showProduct(target.dataset.product);
+  if (target.matches('[data-cart]')) { updateCart(); openDialog('#cart-dialog'); }
+  if (target.matches('[data-close]')) closeDialog(target.closest('dialog'));
+  if (target.matches('[data-close-link]')) closeDialog(target.closest('dialog'));
+  if (target.matches('[data-custom]')) openBrief(target.dataset.custom);
+  if (target.matches('[data-add]')) {
+    const id = target.dataset.add;
+    if (!getProduct(id)) return;
+    if (!cart.includes(id)) { cart.push(id); persist(); target.textContent = 'Guardada en tu bolsa ✓'; }
+    else { closeDialog(target.closest('dialog')); openDialog('#cart-dialog'); }
+  }
+  if (target.matches('[data-remove]')) {
+    cart = cart.filter(id => id !== target.dataset.remove); persist();
+    const root = $('dialog[open]') || $('#checkout-items');
+    $('[data-remove],a,button', root)?.focus();
+    notify('Plantilla quitada de tu bolsa.');
+  }
+  if (target.matches('[data-next]') && validateStep()) {
+    activeStep++; showStep();
+    $(`[data-step="${activeStep}"] input, [data-step="${activeStep}"] select, [data-step="${activeStep}"] textarea`)?.focus();
+  }
+  if (target.matches('[data-prev]')) { activeStep--; showStep(); $(`[data-step="${activeStep}"] input, [data-step="${activeStep}"] select`)?.focus(); }
+  if (target.matches('.menu-toggle')) {
+    const open = $('#main-nav').classList.toggle('open');
+    target.setAttribute('aria-expanded',String(open)); target.setAttribute('aria-label',open?'Cerrar menú':'Abrir menú');
+  }
+  if (target.matches('#main-nav a')) closeMenu();
+  if (target.matches('[data-privacy]')) openDialog('#privacy-dialog');
+  if (target.matches('[data-clear-cart]')) { cart = []; persist(); $('#privacy-status').textContent = 'La bolsa guardada en este navegador se eliminó.'; }
+  if (target.matches('[data-filter]')) {
+    filter = target.dataset.filter; filterProducts();
+    const url = new URL(location.href); filter === 'all' ? url.searchParams.delete('categoria') : url.searchParams.set('categoria',filter);
+    history.replaceState(history.state, '', url);
+  }
+  if (target.matches('[data-reset-filters]')) { filter = 'all'; $('#search').value = ''; filterProducts(); const url = new URL(location.href); url.searchParams.delete('categoria'); history.replaceState(history.state,'',url); }
+  if (target.matches('a[href^="#"]')) {
+    const destination = document.getElementById(target.hash.slice(1));
+    if (destination) { e.preventDefault(); destination.scrollIntoView({behavior:reduced.matches?'instant':'smooth'}); destination.setAttribute('tabindex','-1'); destination.focus({preventScroll:true}); }
+  }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#main-nav').classList.contains('open')) { closeMenu(); $('.menu-toggle').focus(); } });
+document.addEventListener('click', e => { if (!e.target.closest('.site-header')) closeMenu(); });
+addEventListener('storage', e => { if (e.key === bagKey) { try { cart = cleanCart(JSON.parse(e.newValue || '[]')); } catch { cart = []; } updateCart(); } });
+function filterProducts() {
+  const input = $('#search');
+  if (!input) return;
+  const normalize = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const query = normalize(input.value.trim());
+  let count = 0;
+  $$('.product-card').forEach(card => {
+    const visible = (filter === 'all' || card.dataset.category === filter) && normalize(card.dataset.name).includes(query);
+    card.hidden = !visible;
+    if (visible) count++;
+  });
+  $$('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === filter)));
+  $('#result-count').textContent = count;
+  $('.empty-search').hidden = count > 0;
+  const custom = $('.shop-custom [data-custom]');
+  if (custom) custom.dataset.custom = filter === 'all' ? 'carousel' : filter;
+  ScrollTrigger.refresh();
+}
+
+// One Lenis instance, one GSAP ticker, native touch scroll. matchMedia cleanup
+// removes the instance and its callbacks when reduced motion is requested.
+const smoothMedia = gsap.matchMedia();
+smoothMedia.add('(prefers-reduced-motion: no-preference) and (pointer: fine)', () => {
+  lenis = new Lenis({duration:1.05, smoothWheel:true, syncTouch:false, anchors:false});
+  const update = () => ScrollTrigger.update();
+  const tick = time => lenis?.raf(time * 1000);
+  lenis.on('scroll',update); gsap.ticker.add(tick); gsap.ticker.lagSmoothing(0);
+  return () => { gsap.ticker.remove(tick); lenis?.off('scroll',update); lenis?.destroy(); lenis = undefined; };
+});
+function cleanupPage() { pageAbort?.abort(); pageMotion?.revert(); }
+function initPage(container, navigation = false) {
+  pageAbort = new AbortController();
+  const namespace = container.dataset.barbaNamespace;
+  $$('[data-nav]').forEach(link => link.dataset.nav === namespace ? link.setAttribute('aria-current','page') : link.removeAttribute('aria-current'));
+  if (namespace === 'shop') {
+    const requested = new URL(location.href).searchParams.get('categoria');
+    filter = categories[requested] ? requested : 'all';
+    $('#search').addEventListener('input',filterProducts,{signal:pageAbort.signal});
+    filterProducts();
+  }
+  updateCart();
+  pageMotion = gsap.matchMedia();
+  pageMotion.add({motion:'(prefers-reduced-motion: no-preference)',desktop:'(min-width: 768px)'}, context => {
+    if (!context.conditions.motion) return;
+    const intro = gsap.timeline({defaults:{duration:.85,ease:'power3.out'}});
+    const lines = $$('.hero-line',container);
+    if (lines.length) {
+      intro.from(lines,{y:context.conditions.desktop?55:20,stagger:.1},0);
+      // Keep the mobile focal image static so it can paint immediately.
+      if (context.conditions.desktop) intro.from('.hero-card',{y:70,rotation:0,stagger:.1,duration:1.05},.1);
+      intro.from('.hero-seal',{scale:.75,duration:.55},.35);
+    } else {
+      const heading = $('h1',container);
+      if (heading) intro.from(heading,{y:30},0);
+    }
+    if (!context.conditions.desktop) {
+      // On phones, initialize only a single heading tween when it enters view.
+      // Avoid splitting/measuring the entire document during startup.
+      const mobileTweens = [];
+      const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            mobileTweens.push(gsap.from(entry.target,{y:18,duration:.55,ease:'power2.out'}));
+            observer.unobserve(entry.target);
+          }
+        });
+      },{threshold:.2});
+      $$('[data-words]',container).forEach(el=>observer.observe(el));
+      return () => { observer.disconnect(); mobileTweens.forEach(tween=>tween.revert()); };
+    }
+    $$('[data-words]',container).forEach(heading => {
+      const original = heading.innerHTML;
+      const walker = document.createTreeWalker(heading,NodeFilter.SHOW_TEXT);
+      const nodes = []; while(walker.nextNode()) nodes.push(walker.currentNode);
+      const accessibleHeading = heading.cloneNode(true);
+      $$('br', accessibleHeading).forEach(br => br.replaceWith(' '));
+      heading.setAttribute('aria-label', accessibleHeading.textContent.replace(/\s+/g,' ').trim());
+      for(const node of nodes) {
+        const fragment = document.createDocumentFragment();
+        node.textContent.split(/(\s+)/).forEach(word => {
+          if (!word.trim()) fragment.append(document.createTextNode(word));
+          else { const span = document.createElement('span'); span.className = 'word'; span.setAttribute('aria-hidden','true'); span.textContent = word; fragment.append(span); }
+        });
+        node.replaceWith(fragment);
+      }
+      gsap.from($$('.word',heading),{y:24,stagger:.035,duration:.6,ease:'power2.out',scrollTrigger:{trigger:heading,start:'top 90%',once:true}});
+      // Restore authored markup when media settings or routes change.
+      heading.dataset.originalMarkup = original;
+    });
+    $$('.category-item,.process-list li,.stats>div',container).forEach(el => {
+      gsap.from(el,{y:30,duration:.7,ease:'power2.out',scrollTrigger:{trigger:el,start:'top 92%',once:true}});
+    });
+    return () => {
+      $$('[data-original-markup]',container).forEach(heading => { heading.innerHTML = heading.dataset.originalMarkup; delete heading.dataset.originalMarkup; heading.removeAttribute('aria-label'); });
+    };
+  },container);
+  pageMotion.add('(prefers-reduced-motion: no-preference) and (min-width: 1024px)', () => {
+    const section = $('.manifesto',container);
+    if (section) gsap.timeline({scrollTrigger:{trigger:section,start:'top bottom',end:'bottom top',scrub:1}})
+      .fromTo('.manifesto-one',{y:60,rotation:-6},{y:-45,rotation:-15,ease:'none'},0)
+      .fromTo('.manifesto-two',{y:90,rotation:4},{y:-30,rotation:15,ease:'none'},0);
+  },container);
+  const refresh = () => { if(container.isConnected) ScrollTrigger.refresh(); };
+  document.fonts.ready.then(refresh);
+  $$('img',container).forEach(img => { if (!img.complete) img.addEventListener('load',refresh,{once:true,signal:pageAbort.signal}); });
+  $$('details',container).forEach(el => el.addEventListener('toggle',refresh,{signal:pageAbort.signal}));
+  if (navigation) {
+    container.focus({preventScroll:true});
+    if (location.hash) requestAnimationFrame(() => document.getElementById(location.hash.slice(1))?.scrollIntoView());
+  }
+  refresh();
+}
+initPage($('main'));
+// Navigation works with real links while the transition layer loads separately.
+import('@barba/core').then(({default:barba}) => barba.init({
+  preventRunning:true,
+  timeout:10000,
+  prevent:({el,href}) => el.hasAttribute('download') || el.hasAttribute('data-barba-prevent') || href.startsWith('blob:') || (new URL(href,location.href).pathname === location.pathname && new URL(href,location.href).hash),
+  transitions:[{
+    name:'editorial-turn',
+    async leave({current}) {
+      closeMenu(); $$('dialog[open]').forEach(dialog => dialog.close());
+      lenis?.stop();
+      if (!reduced.matches) await gsap.to(current.container,{opacity:0,y:-12,duration:.18,ease:'power2.in'});
+      cleanupPage();
+    },
+    enter({next}) {
+      window.scrollTo({top:0,behavior:'instant'}); lenis?.scrollTo(0,{immediate:true});
+      const doc = new DOMParser().parseFromString(next.html,'text/html');
+      document.title = doc.title;
+      const description = $('meta[name="description"]',doc)?.content;
+      if (description) $('meta[name="description"]').content = description;
+      initPage(next.container,true); lenis?.start();
+    },
+  }],
+}));
+addEventListener('pagehide', () => { cleanupPage(); smoothMedia.revert(); clearTimeout(toastTimer); });
+addEventListener('pageshow', e => { if (e.persisted) location.reload(); });

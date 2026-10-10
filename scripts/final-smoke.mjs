@@ -1,0 +1,32 @@
+import {chromium,expect} from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import {writeFile} from 'node:fs/promises';
+const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+const report=[];
+for(const width of [1440,390]){
+  const context=await browser.newContext({viewport:{width,height:900}});
+  const page=await context.newPage();
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('http://127.0.0.1:4174/');await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(1200);
+  await page.screenshot({path:`test-results/final-hero-${width}.png`});
+  const axe=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();
+  await page.locator('.hero .button').click();
+  await expect(page.locator('main')).toHaveAttribute('data-barba-namespace','shop');
+  await expect(page.locator('main')).toBeFocused();
+  await page.locator('[data-product="c1"]').first().click();
+  await expect(page.locator('#product-dialog')).toBeVisible();
+  await page.screenshot({path:`test-results/final-product-${width}.png`});
+  const dialogAxe=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(()=>document.activeElement.closest('#product-dialog')!==null)).toBe(true);
+  await page.keyboard.press('Escape');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await expect(page.locator('html')).not.toHaveClass(/lenis/);
+  report.push({width,errors,homeViolations:axe.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)})),dialogViolations:dialogAxe.violations.map(v=>v.id)});
+  await context.close();
+}
+await writeFile('test-results/final-smoke.json',JSON.stringify(report,null,2));
+console.log(JSON.stringify(report,null,2));
+await browser.close();
+if(report.some(r=>r.errors.length||r.homeViolations.length||r.dialogViolations.length))process.exitCode=1;

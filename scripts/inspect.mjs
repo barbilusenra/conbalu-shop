@@ -1,0 +1,15 @@
+import { chromium } from '@playwright/test';
+import { mkdir, writeFile } from 'node:fs/promises';
+await mkdir('test-results',{recursive:true});
+const browser = await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+const page = await browser.newPage({viewport:{width:1440,height:1000},deviceScaleFactor:1});
+const errors=[];page.on('pageerror',e=>errors.push(e.message));
+await page.goto('http://127.0.0.1:5173/');
+await page.waitForTimeout(1500);
+await page.screenshot({path:'test-results/home-desktop.png',fullPage:true});
+console.log(JSON.stringify({errors,overflow:await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),title:await page.title()}));
+await page.setViewportSize({width:390,height:844});
+await page.reload();await page.waitForTimeout(1300);
+await page.screenshot({path:'test-results/home-mobile.png',fullPage:true});
+console.log(JSON.stringify({mobileOverflow:await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)}));
+await browser.close();
