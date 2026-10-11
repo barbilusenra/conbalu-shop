@@ -7,7 +7,8 @@ export const integrationStatus = Object.freeze({ checkout: 'pending', email: 'pe
 export async function createCheckout() {
   throw new Error('Las compras todavía no están habilitadas. No se realizó ningún cobro.');
 }
-export function briefToText(data) {
-  const labels = { name: 'Nombre', email: 'Email', product: 'Producto', instagram: 'Instagram', logo: 'Logo', colors: 'Colores de marca', assets: 'Recursos disponibles', goal: 'Qué buscás', timeline: 'Plazo', budget: 'Presupuesto', notes: 'Dirección creativa' };
-  return ['CONBALU · BRIEF CREATIVO', 'Documento preparado localmente. No enviado.', '', ...Object.entries(labels).map(([key, label]) => `${label}: ${data[key] || 'Sin especificar'}`)].join('\n\n');
+export function briefToText(data, locale = 'es') {
+  const en = locale === 'en';
+  const labels = en ? { name: 'Name', email: 'Email', product: 'Product', instagram: 'Instagram', logo: 'Logo', colors: 'Brand colours', assets: 'Available assets', goal: 'Goal', timeline: 'Timeline', budget: 'Budget', notes: 'Creative direction' } : { name: 'Nombre', email: 'Email', product: 'Producto', instagram: 'Instagram', logo: 'Logo', colors: 'Colores de marca', assets: 'Recursos disponibles', goal: 'Qué buscás', timeline: 'Plazo', budget: 'Presupuesto', notes: 'Dirección creativa' };
+  return [en ? 'CONBALU · CREATIVE BRIEF' : 'CONBALU · BRIEF CREATIVO', en ? 'Prepared locally. Not sent.' : 'Documento preparado localmente. No enviado.', '', ...Object.entries(labels).map(([key, label]) => `${label}: ${data[key] || (en ? 'Not specified' : 'Sin especificar')}`)].join('\n\n');
 }

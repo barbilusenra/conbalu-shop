@@ -1,4 +1,14 @@
-# Validación final · 9 de octubre de 2026
+# Validación
+
+## Tercera iteración · 11 de octubre de 2026
+
+Ver `MOTION-ITERATION-03.md` para el alcance y las pruebas actuales. Doce páginas bilingües; nueve pruebas de lógica correctas; recorridos de Chrome desktop y mobile sin errores JavaScript; comprobación del prefijo de Pages y recursos sin errores. Axe no encontró infracciones en las rutas principales evaluadas.
+
+Lighthouse móvil de producción local: 80 rendimiento, 100 accesibilidad, 100 buenas prácticas y 100 SEO. FCP 1,9 s, LCP 3,8 s, TBT 340 ms, CLS 0. La velocidad de carga visual móvil queda como punto de mejora, sin afirmar métricas de campo.
+
+La tercera iteración está en revisión local; no se ha publicado sobre la segunda iteración.
+
+## Registro histórico · Primera iteración · 9 de octubre de 2026
 
 ## Compilación y comportamiento
 

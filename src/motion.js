@@ -1,9 +1,13 @@
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { Flip } from 'gsap/Flip';
+import { SplitText } from 'gsap/SplitText';
+import { initPageChoreography } from './motion-three.js';
+import { translate } from './i18n.js';
 import { Physics2DPlugin } from 'gsap/Physics2DPlugin';
 
-gsap.registerPlugin(ScrollTrigger, Flip, Physics2DPlugin);
+gsap.registerPlugin(ScrollTrigger, Flip, Physics2DPlugin, SplitText);
+const t = text => translate(text, document.documentElement.lang.startsWith('en') ? 'en' : 'es');
 const all = (selector, root = document) => [...root.querySelectorAll(selector)];
 const reduce = matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -18,7 +22,7 @@ export function createMenuController(getLenis) {
     closing = false;
     gsap.set([...panels, ...links], { clearProps: 'all' });
     toggle.setAttribute('aria-expanded', 'false');
-    toggle.setAttribute('aria-label', 'Abrir menú');
+    toggle.setAttribute('aria-label', t('Abrir menú'));
     getLenis()?.start();
     if (returnFocus) toggle.focus({ preventScroll: true });
   };
@@ -38,7 +42,7 @@ export function createMenuController(getLenis) {
     if (!dialog.open) dialog.showModal();
     getLenis()?.stop();
     toggle.setAttribute('aria-expanded', 'true');
-    toggle.setAttribute('aria-label', 'Cerrar menú');
+    toggle.setAttribute('aria-label', t('Cerrar menú'));
     if (reduce.matches) gsap.set([...panels, ...links], { clearProps: 'all' });
     else animation = gsap.timeline()
       .fromTo(panels, { xPercent: 115, y: 0, rotation: 0 }, { xPercent: 0, duration: .7, stagger: .09, ease: 'power4.out' }, 0)
@@ -86,7 +90,7 @@ export function initAmbientMotion() {
   });
   const mark = document.querySelector('.load-mark');
   let intro;
-  if (!reduce.matches && mark) {
+  if (!reduce.matches && matchMedia('(pointer: fine)').matches && mark) {
     gsap.set(mark, { display: 'flex' });
     intro = gsap.timeline({ onComplete: () => { mark.style.display = 'none'; } })
       .fromTo(mark.firstElementChild, { fontWeight: 300, y: 20 }, { fontWeight: 760, y: 0, duration: .55, ease: 'power3.out' })
@@ -104,6 +108,7 @@ export function initMotion(container) {
     const { fine, desktop } = context.conditions;
     const abort = new AbortController();
     const cleanups = [];
+    cleanups.push(initPageChoreography(container, { fine, desktop }));
     const listen = (el, event, fn, options = {}) => el?.addEventListener(event, fn, { ...options, signal: abort.signal });
     const remember = element => { const original = element.innerHTML; cleanups.push(() => { element.innerHTML = original; }); };
     const splitChars = element => {
@@ -116,8 +121,8 @@ export function initMotion(container) {
     const intro = gsap.timeline({ defaults: { duration: .95, ease: 'power3.out' } });
     if (hero) {
       intro.from(hero.querySelectorAll('.hero-line'), { y: 35, stagger: .12 }, .15)
-        .from(hero.querySelectorAll('.hero-float'), { y: 80, rotation: -8, scale: .9, stagger: .12, duration: 1.15 }, .1)
         .from(hero.querySelector('.hero-sticker'), { scale: .8, rotation: 12, ease: 'elastic.out(1,.6)' }, .4);
+      if (fine) intro.from(hero.querySelectorAll('.hero-float:not(.visual-placeholder)'), { y: 80, rotation: -8, scale: .9, stagger: .12, duration: 1.15 }, .1);
       if (desktop) {
         gsap.to(hero.querySelector('.hero-stage'), { y: -80, ease: 'none', scrollTrigger: { trigger: hero, start: 'top top', end: 'bottom top', scrub: .8 } });
         // A clipped image moves inside each frame independently of its outer plane.
@@ -138,58 +143,43 @@ export function initMotion(container) {
       const measure = () => {
         chars.forEach(c => { c.style.width = ''; c.style.fontWeight = '900'; });
         const widths = chars.map(c => c.getBoundingClientRect().width);
-        chars.forEach((c, i) => { c.style.width = `${widths[i]}px`; c.style.fontWeight = '500'; });
+        chars.forEach((c, i) => { c.style.width = `${widths[i]}px`; c.style.fontWeight = '300'; });
         rects = chars.map(c => c.getBoundingClientRect());
       };
       measure();
       document.fonts.ready.then(() => { if (!abort.signal.aborted) measure(); });
       listen(window, 'resize', measure);
       listen(variable, 'pointerenter', () => { rects = chars.map(c => c.getBoundingClientRect()); });
-      listen(variable, 'pointermove', e => {
-        rects.forEach((r, i) => { const distance = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2)); weightTo[i](Math.round(350 + Math.max(0, 1 - distance / 220) * 550)); });
+      listen(hero, 'pointermove', e => {
+        rects.forEach((r, i) => { const distance = Math.abs(e.clientX - (r.left + r.width / 2)); weightTo[i](Math.round(300 + Math.pow(Math.max(0, 1 - distance / 280), .7) * 600)); });
       }, { passive: true });
-      listen(variable, 'pointerleave', () => weightTo.forEach(to => to(500)));
+      listen(hero, 'pointerleave', () => weightTo.forEach(to => to(300)));
     }
 
-    // Entry choreography preserves each original accessible heading.
-    all('[data-words]', container).forEach(heading => {
-      const original = heading.innerHTML, oldLabel = heading.getAttribute('aria-label');
-      const name = heading.innerHTML.replace(/<br\s*\/?\s*>/gi, ' ');
-      const copy = document.createElement('span'); copy.innerHTML = name;
-      heading.setAttribute('aria-label', copy.textContent);
-      const walker = document.createTreeWalker(heading, NodeFilter.SHOW_TEXT);
-      const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
-      nodes.forEach(node => {
-        const fragment = document.createDocumentFragment();
-        node.textContent.split(/(\s+)/).forEach(word => {
-          if (!word.trim()) fragment.append(document.createTextNode(word));
-          else { const span = document.createElement('span'); span.className = 'word'; span.setAttribute('aria-hidden', 'true'); span.textContent = word; fragment.append(span); }
-        });
-        node.replaceWith(fragment);
+    // Masked line reveals are responsive and restored by SplitText on cleanup.
+    const revealHeading = heading => {
+      const split = SplitText.create(heading, { type: 'lines,words', mask: 'lines', linesClass: 'motion-line', autoSplit: true,
+        onSplit(self) { return gsap.from(self.lines, { yPercent: 110, x: desktop ? -35 : 0, rotation: .6, stagger: .09, ease: 'power3.out', scrollTrigger: { trigger: heading, start: 'clamp(top 94%)', end: 'clamp(top 59%)', scrub: .45 } }); }
       });
-      gsap.from(heading.querySelectorAll('.word'), { y: 25, rotation: 2, stagger: .045, duration: .65, ease: 'power3.out', scrollTrigger: { trigger: heading, start: 'top 91%', once: true } });
-      cleanups.push(() => { heading.innerHTML = original; if (oldLabel === null) heading.removeAttribute('aria-label'); else heading.setAttribute('aria-label', oldLabel); });
-    });
-
-    const bento = container.querySelector('[data-bento]');
-    if (bento && desktop) {
-      // Capture a second grid composition, then let vertical scroll scrub the FLIP.
-      let flipContext;
-      const buildBento = () => {
-        flipContext?.revert();
-        flipContext = gsap.context(() => {
-          bento.classList.add('bento-expanded');
-          const state = Flip.getState(all('.category-item', bento));
-          bento.classList.remove('bento-expanded');
-          const animation = Flip.to(state, { duration: 1, ease: 'none', scale: true, paused: true });
-          ScrollTrigger.create({ trigger: bento, start: 'top 16%', end: () => `+=${innerHeight * .55}`, pin: true, scrub: .8, animation });
-        }, bento);
-      };
-      buildBento();
-      let resizeTimer;
-      listen(window, 'resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (!abort.signal.aborted) { buildBento(); ScrollTrigger.refresh(); } }, 180); });
-      cleanups.push(() => { clearTimeout(resizeTimer); flipContext?.revert(); bento.classList.remove('bento-expanded'); });
+      cleanups.push(() => split.revert());
+    };
+    if (desktop) all('[data-words]', container).forEach(revealHeading);
+    else {
+      // Measure lower-page text only when it approaches the viewport on mobile.
+      const observer = new IntersectionObserver(entries => {
+        entries.filter(entry => entry.isIntersecting).forEach(entry => {
+          observer.unobserve(entry.target);
+          context.add(() => revealHeading(entry.target));
+        });
+      }, { rootMargin: '160px 0px' });
+      all('[data-words]', container).forEach(heading => observer.observe(heading));
+      cleanups.push(() => observer.disconnect());
     }
+    // Only media transforms. Card labels and descriptions keep their font size.
+    const bento = container.querySelector('[data-bento]');
+    if (bento) all('.category-visual', bento).forEach((visual, i) => {
+      gsap.fromTo(visual, { scale: desktop ? .84 : .92, rotation: desktop ? (i - 1) * 3 : 0 }, { scale: 1, rotation: 0, ease: 'power2.out', scrollTrigger: { trigger: visual.parentElement, start: 'top 90%', end: 'top 25%', scrub: .6 } });
+    });
     // Three different depth speeds adapt the multi-column parallax reference.
     all('.category-visual', container).forEach((visual, i) => {
       if (desktop) gsap.fromTo(visual.querySelectorAll('.poster'), { y: 32 + i * 8 }, { y: -25 - i * 9, ease: 'none', scrollTrigger: { trigger: visual, start: 'top bottom', end: 'bottom top', scrub: .7 } });
@@ -199,8 +189,8 @@ export function initMotion(container) {
       gsap.fromTo(manifesto.querySelector('.manifesto-one'), { y: 35 }, { y: -40, ease: 'none', scrollTrigger: { trigger: manifesto, start: 'top bottom', end: 'bottom top', scrub: 1 } });
       gsap.fromTo(manifesto.querySelector('.manifesto-two'), { y: -20 }, { y: 45, ease: 'none', scrollTrigger: { trigger: manifesto, start: 'top bottom', end: 'bottom top', scrub: 1 } });
     }
-    all('.process-list li,.stats>div,.product-card,.media-topics>div', container).forEach(el => {
-      gsap.from(el, { y: 35, duration: .75, ease: 'power3.out', scrollTrigger: { trigger: el, start: 'top 96%', once: true } });
+    all('.process-list li,.product-card,.media-topics>div', container).forEach(el => {
+      gsap.from(el, { y: 35, duration: .75, ease: 'power3.out', scrollTrigger: { trigger: el, start: 'top 96%', toggleActions: 'play none none reverse' } });
     });
 
     const reel = container.querySelector('.shop-reel');
@@ -241,7 +231,7 @@ export function initMotion(container) {
         const floats = all('[data-float]', hero).map(el => ({ depth: Number(el.dataset.float), x: gsap.quickTo(el, 'x', { duration: 1.1, ease: 'power3.out' }), y: gsap.quickTo(el, 'y', { duration: 1.4, ease: 'power3.out' }) }));
         listen(hero, 'pointermove', e => { const r = hero.getBoundingClientRect(); floats.forEach(f => { f.x((e.clientX - r.left - r.width / 2) * .06 * f.depth); f.y((e.clientY - r.top - r.height / 2) * .06 * f.depth); }); }, { passive: true });
         listen(hero, 'pointerleave', () => floats.forEach(f => { f.x(0); f.y(0); }));
-        const tokens = ['Tu idea.', 'Con intención.', 'Sin filtro.', 'Tu voz.', 'Mucho más vos.', 'Con carácter.'].map(text => { const el = document.createElement('span'); el.className = 'trail-token'; el.textContent = text; el.setAttribute('aria-hidden', 'true'); document.body.append(el); return el; });
+        const tokens = ['Tu idea.', 'Con intención.', 'Sin filtro.', 'Tu voz.', 'Mucho más vos.', 'Con carácter.'].map(text => { const el = document.createElement('span'); el.className = 'trail-token'; el.textContent = t(text); el.setAttribute('aria-hidden', 'true'); document.body.append(el); return el; });
         let previous, index = 0;
         listen(hero, 'pointermove', e => {
           if (e.target.closest('a,button,[data-variable]')) return;
@@ -276,42 +266,6 @@ export function initMotion(container) {
       });
     }
 
-    const canvas = container.querySelector('.paint-mask');
-    if (canvas) {
-      const ctx = canvas.getContext('2d'), button = container.querySelector('.paint-reveal-button');
-      let previous, distance = 0, revealed = false;
-      const drawCover = () => {
-        if (revealed || !ctx) return;
-        const r = canvas.parentElement.getBoundingClientRect(), dpr = Math.min(devicePixelRatio, 1.5);
-        canvas.width = (r.width + 24) * dpr; canvas.height = (r.height + 24) * dpr;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.globalCompositeOperation = 'source-over';
-        ctx.fillStyle = '#f5ee85'; ctx.fillRect(0, 0, r.width + 24, r.height + 24);
-        ctx.fillStyle = '#30281d'; ctx.font = `550 ${Math.min(r.width * .15, 75)}px Saans`; ctx.textAlign = 'center';
-        ctx.fillText('TU IDEA', r.width / 2 + 12, r.height * .43); ctx.fillText('ESTÁ ACÁ.', r.width / 2 + 12, r.height * .62);
-        ctx.globalCompositeOperation = 'destination-out'; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 95;
-        distance = 0; previous = undefined;
-      };
-      const reveal = () => {
-        if (revealed) return; revealed = true;
-        gsap.to(canvas, { opacity: 0, duration: .6, onComplete: () => { canvas.style.display = 'none'; } });
-        button.textContent = 'Tu próxima gran idea.'; button.disabled = true;
-      };
-      if (ctx) {
-        canvas.style.display = 'block'; button.style.display = 'flex'; drawCover();
-        document.fonts.ready.then(() => { if (!abort.signal.aborted) drawCover(); });
-        const observer = new ResizeObserver(drawCover); observer.observe(canvas.parentElement);
-        listen(canvas, 'pointermove', e => {
-          if (!fine || revealed) return;
-          const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
-          ctx.beginPath(); ctx.moveTo(previous?.x ?? x, previous?.y ?? y); ctx.lineTo(x, y); ctx.stroke();
-          if (previous) distance += Math.hypot(x - previous.x, y - previous.y);
-          previous = { x, y }; if (distance > r.width * 3) reveal();
-        }, { passive: true });
-        listen(canvas, 'pointerleave', () => previous = undefined);
-        listen(canvas, 'click', reveal); listen(button, 'click', reveal);
-        cleanups.push(() => { observer.disconnect(); gsap.killTweensOf(canvas); canvas.style.display = ''; canvas.style.opacity = ''; button.style.display = ''; button.disabled = false; button.innerHTML = 'Revelá tu próxima idea <span aria-hidden="true">↗</span>'; });
-      }
-    }
     listen(window, 'blur', () => all('.trail-token').forEach(el => { gsap.killTweensOf(el); gsap.set(el, { opacity: 0 }); }));
     return () => { abort.abort(); cleanups.reverse().forEach(fn => fn()); };
   }, container);

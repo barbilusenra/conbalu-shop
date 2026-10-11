@@ -1,4 +1,12 @@
 import gsap from 'gsap';
+import { translate, translateMarkup } from './i18n.js';
+import { createPricing, samplePrices } from './pricing.js';
+import { animateFilter, initCursorAndBrand, createExitNudge } from './motion-three.js';
+const locale = document.documentElement.lang.startsWith('en') ? 'en' : 'es';
+const t = text => translate(text, locale);
+const html = text => translateMarkup(text, locale);
+const pricing = createPricing(locale);
+const cleanupCursor = initCursorAndBrand();
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Lenis from 'lenis';
 import { products, categories, cleanCart, getProduct } from './catalog.js';
@@ -10,7 +18,7 @@ const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 const bagKey = 'conbalu:bag:v1';
-const sitePath = path => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`;
+const sitePath = path => `${import.meta.env.BASE_URL}${locale === 'en' && !path.startsWith('/images/') ? 'en/' : ''}${path.replace(/^\/+/, '')}`;
 let cart = [];
 try { cart = cleanCart(JSON.parse(localStorage.getItem(bagKey) || '[]')); } catch { /* Storage can be unavailable. In-memory bag still works. */ }
 let lenis, pageMotion, pageAbort, toastTimer, activeStep = 0, filter = 'all';
@@ -27,7 +35,7 @@ function notify(message) {
   toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
 }
 function persist() {
-  try { localStorage.setItem(bagKey, JSON.stringify(cart)); } catch { notify('Tu selección se conservará durante esta visita.'); }
+  try { localStorage.setItem(bagKey, JSON.stringify(cart)); } catch { notify(t('Tu selección se conservará durante esta visita.')); }
   updateCart();
 }
 function openDialog(id) {
@@ -49,6 +57,7 @@ function closeDialog(dialog) {
   if (reduced.matches) { dialog.close(); return; }
   gsap.to(dialog, { x: dialog.id === 'cart-dialog' ? 80 : 0, y: dialog.id === 'cart-dialog' ? 0 : 12, opacity: 0, duration: .22, ease: 'power2.in', onComplete: () => { dialog.close(); gsap.set(dialog, { clearProps: 'transform,opacity' }); } });
 }
+const exitNudge = createExitNudge($('#brief-dialog'), closeDialog);
 modalIds.forEach(id => {
   const dialog = document.getElementById(id);
   dialog.addEventListener('cancel', e => { e.preventDefault(); closeDialog(dialog); });
@@ -58,7 +67,9 @@ modalIds.forEach(id => {
   dialog.addEventListener('click', e => {
     if (e.target !== dialog) return;
     const r = dialog.getBoundingClientRect();
-    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeDialog(dialog);
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) {
+      if (id === 'brief-dialog') exitNudge.show(e); else closeDialog(dialog);
+    }
   });
 });
 const arrow = '<span aria-hidden="true">↗</span>';
@@ -66,22 +77,23 @@ const art = p => `<div class="poster panel-${p.panel}"><img src="${sitePath('/im
 function showProduct(id) {
   const p = getProduct(id);
   if (!p) return;
-  $('#product-content').innerHTML = `<div class="product-detail"><div class="detail-image">${art(p)}</div><div class="detail-copy"><span class="eyebrow">${categories[p.category].singular} / ${p.number}</span><h2 id="product-title">${p.name}</h2><p>${p.description}</p><div class="detail-facts">Formato digital · Edición en Canva<br>Contenido final y requisitos por confirmar<br>Precio por confirmar</div><button class="button" data-add="${p.id}">${cart.includes(p.id) ? 'Ya está en tu bolsa' : 'Guardar en mi bolsa'} ${arrow}</button><button class="button button-outline" data-custom="${p.category}">Lo quiero a mi manera ${arrow}</button><p class="detail-note">Vista de concepto. La imagen es una exploración visual; el archivo final y sus condiciones se publicarán antes de habilitar la compra.</p></div></div>`;
-  openDialog('#product-dialog');
+  $('#product-content').innerHTML = html(`<div class="product-detail"><div class="detail-image">${art(p)}</div><div class="detail-copy"><span class="eyebrow">${categories[p.category].singular} / ${p.number}</span><h2 id="product-title">${p.name}</h2><p>${p.description}</p><p class="detail-price"><span class="product-price" data-price-usd="${samplePrices[p.category]}"></span><small>Precio de muestra</small></p><div class="detail-facts">Formato digital · Edición en Canva<br>Contenido final y requisitos por confirmar<br>Precio por confirmar</div><button class="button" data-add="${p.id}">${cart.includes(p.id) ? 'Ya está en tu bolsa' : 'Guardar en mi bolsa'} ${arrow}</button><button class="button button-outline" data-custom="${p.category}">Lo quiero a mi manera ${arrow}</button><p class="detail-note">Vista de concepto. La imagen es una exploración visual; el archivo final y sus condiciones se publicarán antes de habilitar la compra.</p></div></div>`);
+  pricing.refresh(); openDialog('#product-dialog');
 }
 function itemMarkup(p) {
-  return `<article class="cart-item">${art(p)}<div><h3>${p.name}</h3><p>${categories[p.category].singular}<br>Precio por confirmar</p></div><button class="remove-item" data-remove="${p.id}" aria-label="Quitar ${p.name}"><span aria-hidden="true">×</span></button></article>`;
+  return html(`<article class="cart-item">${art(p)}<div><h3>${p.name}</h3><p>${categories[p.category].singular}<span class="product-price" data-price-usd="${samplePrices[p.category]}"></span></p></div><button class="remove-item" data-remove="${p.id}" aria-label="Quitar ${p.name}"><span aria-hidden="true">×</span></button></article>`);
 }
 function updateCart() {
   $('[data-bag-display]').textContent = String(cart.length).padStart(2, '0');
   $$('[data-cart-count]').forEach(el => { el.textContent = cart.length; });
-  $('[data-cart]').setAttribute('aria-label', `Abrir bolsa, ${cart.length} ${cart.length === 1 ? 'plantilla' : 'plantillas'}`);
+  $('[data-cart]').setAttribute('aria-label', `${t('Abrir bolsa')}, ${cart.length}`);
   const items = cart.map(getProduct);
-  const empty = `<div class="cart-empty"><h3>Acá empieza tu próxima idea.</h3><p>Tu bolsa está vacía. Explorá las plantillas y guardá las que más van con vos.</p><a href="${sitePath('/shop/')}" class="button" data-close-link>Ir al shop ${arrow}</a></div>`;
-  $('#cart-content').innerHTML = items.length ? items.map(itemMarkup).join('') + `<div class="cart-bottom"><p>${items.length} ${items.length === 1 ? 'plantilla seleccionada' : 'plantillas seleccionadas'}. Precios y compras próximamente. No se realizará ningún cobro.</p><a class="button" href="${sitePath('/checkout/')}" data-close-link>Ver mi selección ${arrow}</a><button class="text-link" data-close>Seguir mirando</button></div>` : empty;
+  const empty = html(`<div class="cart-empty"><h3>Acá empieza tu próxima idea.</h3><p>Tu bolsa está vacía. Explorá las plantillas y guardá las que más van con vos.</p><a href="${sitePath('/shop/')}" class="button" data-close-link>Ir al shop ${arrow}</a></div>`);
+  $('#cart-content').innerHTML = items.length ? items.map(itemMarkup).join('') + html(`<div class="cart-bottom"><p>Precios de muestra. Compras próximamente.</p><p class="bag-total">Total <span data-price-usd="${items.reduce((sum,p) => sum + samplePrices[p.category],0)}"></span></p><p>No se realizará ningún cobro.</p><a class="button" href="${sitePath('/checkout/')}" data-close-link>Ver mi selección ${arrow}</a><button class="text-link" data-close>Seguir mirando</button></div>`) : empty;
   const checkoutItems = $('#checkout-items');
   if (checkoutItems) checkoutItems.innerHTML = items.length ? items.map(itemMarkup).join('') : empty;
-  $$('[data-add]').forEach(button => { if (cart.includes(button.dataset.add)) button.innerHTML = `Ya está en tu bolsa ${arrow}`; });
+  $$('[data-add]').forEach(button => { if (cart.includes(button.dataset.add)) button.innerHTML = html(`Ya está en tu bolsa ${arrow}`); });
+  pricing.refresh();
 }
 function openBrief(category) {
   $('#brief-form').elements.product.value = categories[category] ? category : 'carousel';
@@ -105,7 +117,7 @@ function showStep() {
 function validateStep() {
   const fields = $$('input,select,textarea', $(`[data-step="${activeStep}"]`));
   return fields.every(field => {
-    if (field.required && !field.value.trim()) { field.setCustomValidity('Completá este campo para continuar.'); }
+    if (field.required && !field.value.trim()) { field.setCustomValidity(t('Completá este campo para continuar.')); }
     else { field.setCustomValidity(''); }
     return field.reportValidity();
   });
@@ -117,15 +129,15 @@ $('#brief-form').addEventListener('submit', e => {
   if (!validateStep()) return;
   $$('[data-step]').forEach(el => { el.disabled = false; });
   const data = Object.fromEntries(new FormData(e.currentTarget));
-  data.product = categories[data.product].singular;
+  data.product = t(categories[data.product].singular);
   showStep();
-  const blob = new Blob([briefToText(data)], {type:'text/plain;charset=utf-8'});
+  const blob = new Blob([briefToText(data, locale)], {type:'text/plain;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url; link.download = 'conbalu-mi-brief.txt'; link.dataset.barbaPrevent = 'all';
   document.body.append(link); link.click(); link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  $('.form-status').textContent = 'Tu brief está listo para guardar. No se envió: lo tenés en tu dispositivo para compartirlo cuando se habilite el contacto.';
+  $('.form-status').textContent = t('Tu brief está listo para guardar. No se envió: lo tenés en tu dispositivo para compartirlo cuando se habilite el contacto.');
 });
 
 function closeMenu() { menuController.close({ immediate: true, returnFocus: false }); }
@@ -140,14 +152,14 @@ document.addEventListener('click', e => {
   if (target.matches('[data-add]')) {
     const id = target.dataset.add;
     if (!getProduct(id)) return;
-    if (!cart.includes(id)) { cart.push(id); persist(); target.textContent = 'Guardada en tu bolsa ✓'; burst(target); }
+    if (!cart.includes(id)) { cart.push(id); persist(); target.textContent = t('Guardada en tu bolsa ✓'); burst(target); }
     else { closeDialog(target.closest('dialog')); openDialog('#cart-dialog'); }
   }
   if (target.matches('[data-remove]')) {
     cart = cart.filter(id => id !== target.dataset.remove); persist();
     const root = $('dialog[open]') || $('#checkout-items');
     $('[data-remove],a,button', root)?.focus();
-    notify('Plantilla quitada de tu bolsa.');
+    notify(t('Plantilla quitada de tu bolsa.'));
   }
   if (target.matches('[data-next]') && validateStep()) {
     activeStep++; showStep();
@@ -157,7 +169,7 @@ document.addEventListener('click', e => {
   if (target.matches('.menu-toggle')) menuController.toggle();
   if (target.matches('#main-nav a')) closeMenu();
   if (target.matches('[data-privacy]')) openDialog('#privacy-dialog');
-  if (target.matches('[data-clear-cart]')) { cart = []; persist(); $('#privacy-status').textContent = 'La bolsa guardada en este navegador se eliminó.'; }
+  if (target.matches('[data-clear-cart]')) { cart = []; persist(); $('#privacy-status').textContent = t('La bolsa guardada en este navegador se eliminó.'); }
   if (target.matches('[data-filter]')) {
     filter = target.dataset.filter; filterProducts();
     const url = new URL(location.href); filter === 'all' ? url.searchParams.delete('categoria') : url.searchParams.set('categoria',filter);
@@ -170,17 +182,20 @@ document.addEventListener('click', e => {
   }
 });
 addEventListener('storage', e => { if (e.key === bagKey) { try { cart = cleanCart(JSON.parse(e.newValue || '[]')); } catch { cart = []; } updateCart(); } });
-function filterProducts() {
+let filterAnimation;
+function filterProducts(animate = true) {
   const input = $('#search');
   if (!input) return;
   const normalize = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
   const query = normalize(input.value.trim());
   let count = 0;
-  $$('.product-card').forEach(card => {
-    const visible = (filter === 'all' || card.dataset.category === filter) && normalize(card.dataset.name).includes(query);
+  const cards = $$('.product-card');
+  const update = () => cards.forEach(card => {
+    const visible = (filter === 'all' || card.dataset.category === filter) && normalize(card.dataset.name + ' ' + t(getProduct(card.querySelector('[data-product]').dataset.product).name)).includes(query);
     card.hidden = !visible;
     if (visible) count++;
   });
+  if (animate) { filterAnimation?.kill(); filterAnimation = animateFilter(cards, update); } else update();
   $$('[data-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === filter)));
   $('#result-count').textContent = count;
   $('.empty-search').hidden = count > 0;
@@ -199,20 +214,22 @@ smoothMedia.add('(prefers-reduced-motion: no-preference) and (pointer: fine)', (
   lenis.on('scroll',update); gsap.ticker.add(tick); gsap.ticker.lagSmoothing(0);
   return () => { gsap.ticker.remove(tick); lenis?.off('scroll',update); lenis?.destroy(); lenis = undefined; };
 });
-function cleanupPage() { pageAbort?.abort(); pageMotion?.(); }
+function cleanupPage() { filterAnimation?.kill(); pageAbort?.abort(); pageMotion?.(); }
 function initPage(container, navigation = false) {
   pageAbort = new AbortController();
   const namespace = container.dataset.barbaNamespace;
+  const route = location.pathname.slice(import.meta.env.BASE_URL.length).replace(/^en\//, '');
+  $$('[data-language]').forEach(link => { link.href = import.meta.env.BASE_URL + (link.dataset.language === 'en' ? 'en/' : '') + route + location.search + location.hash; });
   $$('[data-nav]').forEach(link => link.dataset.nav === namespace ? link.setAttribute('aria-current','page') : link.removeAttribute('aria-current'));
   if (namespace === 'shop') {
     const requested = new URL(location.href).searchParams.get('categoria');
     filter = categories[requested] ? requested : 'all';
     $('#search').addEventListener('input',filterProducts,{signal:pageAbort.signal});
-    filterProducts();
+    filterProducts(false);
   }
   updateCart();
   pageMotion = initMotion(container);
-  const refresh = () => { if(container.isConnected) ScrollTrigger.refresh(); };
+  const refresh = () => { if(container.isConnected) { ScrollTrigger.sort(); ScrollTrigger.refresh(); } };
   document.fonts.ready.then(refresh);
   $$('img',container).forEach(img => { if (!img.complete) img.addEventListener('load',refresh,{once:true,signal:pageAbort.signal}); });
   $$('details',container).forEach(el => el.addEventListener('toggle',refresh,{signal:pageAbort.signal}));
@@ -233,7 +250,8 @@ import('@barba/core').then(({default:barba}) => barba.init({
     async leave({current}) {
       closeMenu(); $$('dialog[open]').forEach(dialog => dialog.close());
       lenis?.stop();
-      if (!reduced.matches) await gsap.to(current.container,{opacity:0,y:-12,duration:.18,ease:'power2.in'});
+      if (!reduced.matches) await gsap.timeline().to(current.container,{y:-35,duration:.35,ease:'power3.in'},0).fromTo('.page-curtain',{yPercent:0},{yPercent:-101,duration:.48,ease:'power4.inOut'},0);
+      gsap.set(current.container,{clearProps:'transform'});
       cleanupPage();
     },
     // Barba removes the previous container before `after`. Measuring earlier
@@ -245,8 +263,9 @@ import('@barba/core').then(({default:barba}) => barba.init({
       const description = $('meta[name="description"]',doc)?.content;
       if (description) $('meta[name="description"]').content = description;
       initPage(next.container,true); lenis?.resize(); lenis?.start();
+      if (!reduced.matches) gsap.to('.page-curtain',{yPercent:-202,duration:.5,ease:'power4.inOut',onComplete:()=>gsap.set('.page-curtain',{yPercent:0})});
     },
   }],
 }));
-addEventListener('pagehide', () => { cleanupPage(); smoothMedia.revert(); cleanupAmbient(); menuController.destroy(); clearTimeout(toastTimer); });
+addEventListener('pagehide', () => { cleanupPage(); smoothMedia.revert(); cleanupAmbient(); cleanupCursor(); menuController.destroy(); clearTimeout(toastTimer); });
 addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
